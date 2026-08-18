@@ -1,0 +1,45 @@
+{
+  "heartbeat": "2026-08-18T18:10:20.843149+00:00",
+  "incidents": {
+    "7eTbAa2jWdToLkraZj5y": {
+      "modified": "2026-04-08T13:12:36+00:00",
+      "status": "AVAILABLE"
+    },
+    "DsirqJ1gpPRgVQeccPRv": {
+      "modified": "2025-12-29T19:05:57+00:00",
+      "status": "AVAILABLE"
+    },
+    "LEubPCm2octf2uMqCFKE": {
+      "modified": "2026-08-18T16:28:47+00:00",
+      "status": "SERVICE_INFORMATION"
+    },
+    "TZF4pLmbzFdoBPP6o3iv": {
+      "modified": "2026-02-25T06:34:29+00:00",
+      "status": "AVAILABLE"
+    },
+    "VbnSXAH4SmEcxPtx4YSD": {
+      "modified": "2026-03-25T14:39:46+00:00",
+      "status": "AVAILABLE"
+    },
+    "YUX1peHev5a4fkxLDiUQ": {
+      "modified": "2026-06-26T17:58:18+00:00",
+      "status": "AVAILABLE"
+    },
+    "a7Aainy6E9rZsmfq82xt": {
+      "modified": "2025-09-22T06:14:57+00:00",
+      "status": "AVAILABLE"
+    },
+    "mYbNTqV1ytDc2fA8hUz4": {
+      "modified": "2026-02-27T10:03:01+00:00",
+      "status": "AVAILABLE"
+    },
+    "pW6WN7Ymo49q7z8pKk9w": {
+      "modified": "2025-10-06T20:40:37+00:00",
+      "status": "AVAILABLE"
+    },
+    "wdAXJk6LRRihEjpzEeWE": {
+      "modified": "2026-06-02T12:44:24+00:00",
+      "status": "AVAILABLE"
+    }
+  }
+}
