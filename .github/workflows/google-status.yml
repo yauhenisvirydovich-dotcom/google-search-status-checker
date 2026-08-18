@@ -1,0 +1,46 @@
+name: Google Search Status Checker
+
+on:
+  schedule:
+    # Каждые 5 минут:
+    # 02, 07, 12, 17, 22... минуты каждого часа
+    - cron: "2-57/5 * * * *"
+
+  # Позволяет запускать вручную
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: google-search-status-checker
+  cancel-in-progress: false
+
+jobs:
+  check-status:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check Google Search Status
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TEST_MESSAGE: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 checker.py
+
+      - name: Save new state
+        run: |
+          if [ -z "$(git status --porcelain -- state.json)" ]; then
+            echo "Google status has not changed."
+            exit 0
+          fi
+
+          git config user.name "google-status-checker"
+          git config user.email "google-status-checker@users.noreply.github.com"
+
+          git add state.json
+          git commit -m "Update Google Search status state"
+          git push
