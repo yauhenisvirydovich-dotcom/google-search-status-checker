@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -24,7 +25,10 @@ STATUS_NAMES = {
 
 
 def status_name(status):
-    return STATUS_NAMES.get(status, status or "Unknown")
+    return STATUS_NAMES.get(
+        status,
+        status or "Unknown",
+    )
 
 
 def fetch_incidents():
@@ -35,17 +39,25 @@ def fetch_incidents():
         },
     )
 
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(
+        request,
+        timeout=30,
+    ) as response:
         data = json.load(response)
 
     if not isinstance(data, list):
-        raise RuntimeError("Google returned unexpected JSON")
+        raise RuntimeError(
+            "Google returned unexpected JSON"
+        )
 
     return data
 
 
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{BOT_TOKEN}/sendMessage"
+    )
 
     data = urllib.parse.urlencode(
         {
@@ -61,27 +73,105 @@ def send_telegram(message):
         method="POST",
     )
 
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(
+        request,
+        timeout=30,
+    ) as response:
         result = json.load(response)
 
     if not result.get("ok"):
-        raise RuntimeError(f"Telegram error: {result}")
+        raise RuntimeError(
+            f"Telegram error: {result}"
+        )
 
 
 def clean_text(text):
     """
-    Google иногда отдаёт ссылки в виде:
-    <https://example.com>
+    Очищает текст Google перед отправкой в Telegram.
 
-    Для Telegram превращаем их в обычные ссылки:
-    https://example.com
+    Удаляет:
+    - ссылки <https://example.com>
+    - обычные https://example.com
+    - обычные http://example.com
+    - markdown-ссылки [текст](https://example.com)
+
+    При этом текст markdown-ссылки сохраняется.
     """
-    return (
-        (text or "")
+
+    text = text or ""
+
+    # Markdown-ссылки:
+    # [Spam updates](https://example.com)
+    # превращаются в:
+    # Spam updates
+    text = re.sub(
+        r"\[([^\]]+)\]\(https?://[^)]+\)",
+        r"\1",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Ссылки в угловых скобках:
+    # <https://example.com>
+    text = re.sub(
+        r"<https?://[^>]+>",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Обычные URL:
+    # https://example.com
+    # http://example.com
+    text = re.sub(
+        r"https?://[^\s<>]+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Удаляем оставшиеся угловые скобки
+    text = (
+        text
         .replace("<", "")
         .replace(">", "")
-        .strip()
     )
+
+    # Убираем лишние пробелы
+    text = re.sub(
+        r"[ \t]{2,}",
+        " ",
+        text,
+    )
+
+    # Убираем пробел перед знаками препинания.
+    #
+    # Например:
+    # "spam update , which"
+    # ->
+    # "spam update, which"
+    text = re.sub(
+        r"\s+([,.;:!?])",
+        r"\1",
+        text,
+    )
+
+    # Не больше одной пустой строки подряд
+    text = re.sub(
+        r"\n[ \t]*\n[ \t]*\n+",
+        "\n\n",
+        text,
+    )
+
+    # Убираем пробелы в начале и конце строк
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+    ]
+
+    text = "\n".join(lines)
+
+    return text.strip()
 
 
 def parse_datetime(value):
@@ -98,12 +188,10 @@ def parse_datetime(value):
 
 def get_initial_update(incident):
     """
-    Возвращает самое первое сообщение Google
-    по конкретному инциденту.
-
-    Это именно то описание, которое видно
-    на Google Search Status Dashboard.
+    Возвращает самое первое обновление
+    конкретного Google Search инцидента.
     """
+
     updates = incident.get("updates", [])
 
     if not updates:
@@ -115,43 +203,91 @@ def get_initial_update(incident):
         date_value = (
             update.get("when")
             or update.get("created")
+            or update.get("modified")
         )
 
-        parsed = parse_datetime(date_value)
+        parsed = parse_datetime(
+            date_value
+        )
 
         if parsed is not None:
-            dated_updates.append((parsed, update))
+            dated_updates.append(
+                (
+                    parsed,
+                    update,
+                )
+            )
 
+    # Если даты удалось определить,
+    # выбираем самое раннее сообщение.
     if dated_updates:
-        dated_updates.sort(key=lambda item: item[0])
+        dated_updates.sort(
+            key=lambda item: item[0]
+        )
+
         return dated_updates[0][1]
 
     # Запасной вариант.
-    # Сейчас Google отдаёт updates от новых к старым.
+    # Google обычно отдаёт updates
+    # от новых к старым.
     return updates[-1]
 
 
 def get_initial_description(incident):
-    initial_update = get_initial_update(incident)
+    """
+    Первоначальное описание инцидента.
+    Все ссылки из текста удаляются.
+    """
+
+    initial_update = get_initial_update(
+        incident
+    )
 
     return clean_text(
-        initial_update.get("text", "")
+        initial_update.get(
+            "text",
+            "",
+        )
     )
 
 
 def get_latest_description(incident):
-    update = incident.get("most_recent_update", {})
+    """
+    Самое последнее сообщение Google.
+    Все ссылки из текста удаляются.
+    """
+
+    update = incident.get(
+        "most_recent_update",
+        {},
+    )
 
     return clean_text(
-        update.get("text", "")
+        update.get(
+            "text",
+            "",
+        )
     )
 
 
 def incident_url(incident):
-    incident_id = incident.get("id", "")
+    """
+    Ссылка на сам Google Search Status incident.
+
+    Эта ссылка НЕ удаляется,
+    поскольку добавляется нами отдельно
+    и не проходит через clean_text().
+    """
+
+    incident_id = incident.get(
+        "id",
+        "",
+    )
 
     if not incident_id:
-        return "https://status.search.google.com/"
+        return (
+            "https://status.search.google.com/"
+        )
 
     return (
         "https://status.search.google.com/"
@@ -163,31 +299,45 @@ def new_incident_message(incident):
     """
     Сообщение о совершенно новом инциденте.
     """
-    update = incident.get("most_recent_update", {})
+
+    update = incident.get(
+        "most_recent_update",
+        {},
+    )
 
     current_status = update.get(
         "status",
         "UNKNOWN",
     )
 
-    title = incident.get(
-        "external_desc",
-        "Google Search update",
+    title = clean_text(
+        incident.get(
+            "external_desc",
+            "Google Search update",
+        )
     )
 
-    service = incident.get(
-        "service_name",
-        "Unknown",
+    service = clean_text(
+        incident.get(
+            "service_name",
+            "Unknown",
+        )
     )
 
-    initial_text = get_initial_description(incident)
-    latest_text = get_latest_description(incident)
+    initial_text = get_initial_description(
+        incident
+    )
+
+    latest_text = get_latest_description(
+        incident
+    )
 
     message = (
         "🆕 Новый Google Search инцидент\n\n"
         f"📌 {title}\n"
         f"Сервис: {service}\n"
-        f"Статус: {status_name(current_status)}\n"
+        f"Статус: "
+        f"{status_name(current_status)}\n"
     )
 
     if initial_text:
@@ -198,7 +348,7 @@ def new_incident_message(incident):
         )
 
     # Если последнее сообщение уже отличается
-    # от первоначального — добавляем его отдельно.
+    # от первоначального — показываем отдельно.
     if (
         latest_text
         and latest_text != initial_text
@@ -222,30 +372,45 @@ def changed_incident_message(
     old_status=None,
 ):
     """
-    Отдельное новое Telegram-сообщение,
+    Новое отдельное Telegram-сообщение,
     когда Google изменил существующий инцидент.
+
+    Старое сообщение Telegram не редактируется.
     """
-    update = incident.get("most_recent_update", {})
+
+    update = incident.get(
+        "most_recent_update",
+        {},
+    )
 
     current_status = update.get(
         "status",
         "UNKNOWN",
     )
 
-    title = incident.get(
-        "external_desc",
-        "Google Search update",
+    title = clean_text(
+        incident.get(
+            "external_desc",
+            "Google Search update",
+        )
     )
 
-    service = incident.get(
-        "service_name",
-        "Unknown",
+    service = clean_text(
+        incident.get(
+            "service_name",
+            "Unknown",
+        )
     )
 
-    initial_text = get_initial_description(incident)
-    latest_text = get_latest_description(incident)
+    initial_text = get_initial_description(
+        incident
+    )
 
-    # Если реально изменился статус
+    latest_text = get_latest_description(
+        incident
+    )
+
+    # Если изменился именно статус
     if (
         old_status
         and old_status != current_status
@@ -257,8 +422,8 @@ def changed_incident_message(
             f"{status_name(current_status)}\n\n"
         )
 
-    # Если Google просто добавил новое сообщение,
-    # но статус оставил прежним
+    # Если Google добавил новый комментарий,
+    # но сам статус остался прежним
     else:
         message = (
             "📝 Новый Google Search Status update\n\n"
@@ -267,7 +432,8 @@ def changed_incident_message(
     message += (
         f"📌 {title}\n"
         f"Сервис: {service}\n"
-        f"Статус: {status_name(current_status)}\n"
+        f"Статус: "
+        f"{status_name(current_status)}\n"
     )
 
     if initial_text:
@@ -277,13 +443,16 @@ def changed_incident_message(
             f"{initial_text}\n"
         )
 
-    if latest_text:
-        if latest_text != initial_text:
-            message += (
-                "\n"
-                "🔔 Последнее обновление:\n"
-                f"{latest_text}\n"
-            )
+    # Не повторяем один и тот же текст дважды.
+    if (
+        latest_text
+        and latest_text != initial_text
+    ):
+        message += (
+            "\n"
+            "🔔 Последнее обновление:\n"
+            f"{latest_text}\n"
+        )
 
     message += (
         "\n"
@@ -295,35 +464,49 @@ def changed_incident_message(
 
 def test_message(incident):
     """
-    Сообщение при ручном запуске
+    Тестовое сообщение при ручном запуске
     с TEST_MESSAGE=true.
     """
-    update = incident.get("most_recent_update", {})
+
+    update = incident.get(
+        "most_recent_update",
+        {},
+    )
 
     current_status = update.get(
         "status",
         "UNKNOWN",
     )
 
-    title = incident.get(
-        "external_desc",
-        "Google Search update",
+    title = clean_text(
+        incident.get(
+            "external_desc",
+            "Google Search update",
+        )
     )
 
-    service = incident.get(
-        "service_name",
-        "Unknown",
+    service = clean_text(
+        incident.get(
+            "service_name",
+            "Unknown",
+        )
     )
 
-    initial_text = get_initial_description(incident)
-    latest_text = get_latest_description(incident)
+    initial_text = get_initial_description(
+        incident
+    )
+
+    latest_text = get_latest_description(
+        incident
+    )
 
     message = (
         "✅ Google Search Status Checker работает!\n\n"
         "Последнее событие Google:\n\n"
         f"📌 {title}\n"
         f"Сервис: {service}\n"
-        f"Статус: {status_name(current_status)}\n"
+        f"Статус: "
+        f"{status_name(current_status)}\n"
     )
 
     if initial_text:
@@ -376,15 +559,22 @@ def main():
         {},
     )
 
-    # Если state.json ещё пустой,
-    # считаем это первым запуском.
-    first_run = not bool(old_incidents)
+    # На самом первом запуске создаём baseline,
+    # но не отправляем старые события.
+    first_run = not bool(
+        old_incidents
+    )
 
     current_incidents = {}
 
-    # Создаём текущее состояние Google
+    # ---------------------------------
+    # СОБИРАЕМ ТЕКУЩЕЕ СОСТОЯНИЕ
+    # ---------------------------------
+
     for incident in incidents:
-        incident_id = incident.get("id")
+        incident_id = incident.get(
+            "id"
+        )
 
         if not incident_id:
             continue
@@ -394,7 +584,9 @@ def main():
             {},
         )
 
-        current_incidents[incident_id] = {
+        current_incidents[
+            incident_id
+        ] = {
             "modified": incident.get(
                 "modified",
                 "",
@@ -413,19 +605,21 @@ def main():
             ),
         }
 
-    # На первом запуске уведомления не отправляем.
-    #
-    # Просто записываем текущее состояние,
-    # чтобы бот не прислал сразу десятки
-    # старых инцидентов.
+    # ---------------------------------
+    # ПРОВЕРЯЕМ ИЗМЕНЕНИЯ
+    # ---------------------------------
+
     if not first_run:
 
-        # Google обычно отдаёт новые события первыми.
-        # reversed нужен, чтобы Telegram получил
-        # события в хронологическом порядке:
-        # сначала старые изменения, потом новые.
-        for incident in reversed(incidents):
-            incident_id = incident.get("id")
+        # reversed нужен для того,
+        # чтобы уведомления приходили
+        # в хронологическом порядке.
+        for incident in reversed(
+            incidents
+        ):
+            incident_id = incident.get(
+                "id"
+            )
 
             if not incident_id:
                 continue
@@ -438,9 +632,10 @@ def main():
                 incident_id
             )
 
-            # -----------------------------
-            # СОВЕРШЕННО НОВЫЙ ИНЦИДЕНТ
-            # -----------------------------
+            # -------------------------
+            # НОВЫЙ ИНЦИДЕНТ
+            # -------------------------
+
             if old is None:
                 send_telegram(
                     new_incident_message(
@@ -450,13 +645,14 @@ def main():
 
                 continue
 
-            # -----------------------------
-            # GOOGLE ИЗМЕНИЛ ИНЦИДЕНТ
-            # -----------------------------
+            # -------------------------
+            # ИНЦИДЕНТ ИЗМЕНИЛСЯ
+            # -------------------------
             #
-            # modified меняется, когда Google
-            # публикует новое обновление
-            # или редактирует существующее.
+            # Google меняет modified,
+            # когда публикует новое обновление
+            # или меняет существующее событие.
+
             if (
                 old.get("modified")
                 != current.get("modified")
@@ -470,13 +666,21 @@ def main():
                     )
                 )
 
-    now = datetime.now(timezone.utc)
+    # ---------------------------------
+    # HEARTBEAT
+    # ---------------------------------
+
+    now = datetime.now(
+        timezone.utc
+    )
 
     # Heartbeat нужен, чтобы public GitHub
     # repository не оставался без активности
     # больше 60 дней.
     old_heartbeat = parse_datetime(
-        old_state.get("heartbeat")
+        old_state.get(
+            "heartbeat"
+        )
     )
 
     if (
@@ -485,7 +689,13 @@ def main():
     ):
         heartbeat = now.isoformat()
     else:
-        heartbeat = old_state["heartbeat"]
+        heartbeat = old_state[
+            "heartbeat"
+        ]
+
+    # ---------------------------------
+    # СОХРАНЯЕМ STATE
+    # ---------------------------------
 
     new_state = {
         "heartbeat": heartbeat,
@@ -503,8 +713,13 @@ def main():
         encoding="utf-8",
     )
 
+    # ---------------------------------
+    # TEST_MESSAGE
+    # ---------------------------------
+
     # При ручном запуске GitHub Actions
     # с TEST_MESSAGE=true отправляем тест.
+
     if TEST_MESSAGE:
         if incidents:
             send_telegram(
